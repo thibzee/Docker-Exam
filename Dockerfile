@@ -1,26 +1,29 @@
-FROM node:21-alpine AS base 
+FROM node:21-alpine as base
 
-RUN apk --no-cache add dumb-init
-RUN mkdir -p /home/node/app && chown node:node /home/node/app
-WORKDIR /home/node/app
-USER node
-RUN mkdir tmp
+# All deps stage
+FROM base as deps
+WORKDIR /app
+ADD package.json package-lock.json ./
+RUN npm ci
 
-FROM base AS dependencies
-COPY --chown=node:node ./package*.json ./
-RUN npm ci --production
-COPY --chown=node:node . .
+# Production only deps stage
+FROM base as production-deps
+WORKDIR /app
+ADD package.json package-lock.json ./
+RUN npm ci --omit=dev
 
-FROM dependencies AS build
+# Build stage
+FROM base as build
+WORKDIR /app
+COPY --from=deps /app/node_modules /app/node_modules
+ADD . .
 RUN node ace build
 
-FROM base AS production
+# Production stage
+FROM base
 ENV NODE_ENV=production
-ENV PORT=$PORT
-ENV HOST=192.168.140.180
-COPY --chown=node:node ./package*.json ./
-COPY --chown=node:node --from=build /home/node/app/build .
-EXPOSE $PORT
-CMD [ "dumb-init", "node", "server.js" ]
-
-
+WORKDIR /app
+COPY --from=production-deps /app/node_modules /app/node_modules
+COPY --from=build /app/build /app
+EXPOSE 3333
+CMD ["node", "./bin/server.js"]
